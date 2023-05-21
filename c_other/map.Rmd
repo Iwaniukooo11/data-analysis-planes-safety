@@ -1,0 +1,131 @@
+```{r}
+print('start')
+# install.packages("data.table")
+# install.packages("leaflet")
+# install.packages("tmap")
+# install.packages('dplyr')
+# install.packages('ggplot2')
+# install.packages('shiny')
+library(ggplot2)
+library(data.table)
+library("leaflet")
+library(shiny)
+# library(magrittr)
+
+# Importuj tylko wybrane wiersze
+
+
+
+# Wczytaj wybrane wiersze do data.table
+selected_columns = c('Year','Month','DayofMonth','DayOfWeek','FlightNum','UniqueCarrier','ArrDelay','DepDelay','Origin','Dest','Distance','Cancelled','CancellationCode','Diverted','CarrierDelay','WeatherDelay','NASDelay','SecurityDelay','LateAircraftDelay')
+# dt <- fread(file_path,select=selected_columns)
+dt <- data.table()
+
+for(year in 2003:2007){
+  filename <- paste0("./dataverse_files/", year, ".csv")  # Zastąp "nazwa_pliku_" odpowiednią nazwą pliku
+
+  # Importowanie danych z pliku
+  data <- fread(filename, select = selected_columns)
+  data <- data[sample(.N,100000)]# Możesz dostosować funkcję fread() do formatu pliku danych, który importujesz
+
+  # Dodawanie danych do ramki danych
+  dt <- rbindlist(list(dt, data))
+}
+
+dt_airports = fread('./dataverse_files/airports.csv',select=c('iata','lat','long','airport'))
+dt_companies = fread('./dataverse_files/carriers.csv')
+colnames(dt_companies)=c('Code','CompanyName')
+is.data.table(dt)
+length_start= nrow(dt)
+# dt[is.nan(CancellationCode)]
+dt[Cancelled==1 & is.na(CancellationCode)==FALSE] 
+```
+
+```{r}
+dt[is.na(dt)] <- 0
+```
+
+```{r}
+summary(dt)
+
+```
+
+```{r}
+dt <- dt[ArrDelay>-60 &ArrDelay<180 & DepDelay>-10 & DepDelay<180 & CarrierDelay<600 & WeatherDelay<600 & NASDelay < 600 & LateAircraftDelay<600 ]
+summary(dt)
+length_finish=nrow(dt)
+```
+
+```{r}
+dt  <-as.data.table(merge(dt,dt_airports,by.x="Origin",by.y="iata"))
+setnames(dt,old=c('airport','lat','long'),new=c('airportOrigin','latOrigin','longOrigin'))
+
+dt  <-as.data.table(merge(dt,dt_airports,by.x="Dest",by.y="iata"))
+setnames(dt,old=c('airport','lat','long'),new=c('airportDest','latDest','longDest'))
+```
+
+```{r}
+dt  <-as.data.table(merge(dt,dt_companies,by.x="UniqueCarrier",by.y="Code"))
+dt[, CompanyName := gsub("\\s*\\([^\\)]+\\)", "", CompanyName)]
+```
+
+```{r}
+dt
+```
+
+```{r}
+ui <- fluidPage(
+  titlePanel("Interaktywna mapa lotów"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("year", "Wybierz rok:", min = as.integer(min(dt$Year)), max = as.integer(max(dt$Year)), value = as.integer(min(dt$Year)), step = 1),
+      sliderInput("month", "Wybierz miesiąc:", min = 1, max = 12, value = 1, step = 1),
+      selectInput("cancelcode", "Wybierz kod anulowania:", choices = unique(dt$CancellationCode)),
+      width = 3
+    ),
+    
+    mainPanel(
+      leafletOutput("map", width = "100%", height = "700px")
+    )
+  )
+)
+
+server <- function(input, output) {
+  output$map <- renderLeaflet({
+    filtered_data <- dt[Year == as.integer(input$year) & Month == input$month & CancellationCode == input$cancelcode]
+    
+    # Agregacja danych na podstawie współrzędnych miejsc startowych i końcowych
+    cluster_data <- filtered_data[, .(DepDelay = mean(DepDelay), ArrDelay = mean(ArrDelay)),
+                                  by = .(Origin, Dest, longOrigin = longOrigin, latOrigin = latOrigin, longDest = longDest, latDest = latDest)]
+    
+    leaflet() %>%
+      addTiles() %>%
+      addCircleMarkers(
+        data = cluster_data,
+        lng = ~longOrigin,
+        lat = ~latOrigin,
+        weight = 1,
+        radius = 3,
+        color = "blue",
+        fillOpacity = 0.6,
+        popup = ~paste("Start:", Origin, "<br>Delay:", DepDelay),
+        clusterOptions = markerClusterOptions()
+      ) %>%
+      addCircleMarkers(
+        data = cluster_data,
+        lng = ~longDest,
+        lat = ~latDest,
+        weight = 1,
+        radius = 3,
+        color = "red",
+        fillOpacity = 0.6,
+        popup = ~paste("Koniec:", Dest, "<br>Delay:", ArrDelay),
+        clusterOptions = markerClusterOptions()
+      )
+  })
+}
+
+shinyApp(ui, server)
+
+```
