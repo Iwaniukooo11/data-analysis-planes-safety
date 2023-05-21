@@ -1,0 +1,219 @@
+---
+title: '2008'
+output: html_document
+date: "2023-05-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+```{r}
+# install.packages('terra', repos='https://rspatial.r-universe.dev')
+```
+
+
+```{r}
+print('start')
+# install.packages("data.table")
+# install.packages("leaflet")
+# install.packages("tmap")
+# install.packages('dplyr')
+# install.packages('ggplot2')
+library(ggplot2)
+library(data.table)
+library("leaflet")
+# library(magrittr)
+
+# Importuj tylko wybrane wiersze
+n <- 1000  # liczba wierszy do wczytania
+file_path <- "./dataverse_files/2007.csv"
+
+# Wczytaj wybrane wiersze do data.table
+selected_columns = c('Year','Month','DayofMonth','DayOfWeek','FlightNum','UniqueCarrier','ArrDelay','DepDelay','Origin','Dest','Distance','Cancelled','CancellationCode','Diverted','CarrierDelay','WeatherDelay','NASDelay','SecurityDelay','LateAircraftDelay')
+dt <- fread(file_path,select=selected_columns)
+dt_airports = fread('./dataverse_files/airports.csv',select=c('iata','lat','long','airport'))
+dt_companies = fread('./dataverse_files/carriers.csv')
+colnames(dt_companies)=c('Code','CompanyName')
+is.data.table(dt)
+length_start= nrow(dt)
+# dt[is.nan(CancellationCode)]
+dt[Cancelled==1 & is.na(CancellationCode)==FALSE] 
+```
+
+
+```{r}
+print(dt)
+colnames(dt)
+```
+## Data Normalization
+
+```{r}
+dt[is.na(dt)] <- 0
+```
+```{r}
+summary(dt)
+
+```
+```{r}
+dt <- dt[ArrDelay>-60 &ArrDelay<180 & DepDelay>-10 & DepDelay<180 & CarrierDelay<600 & WeatherDelay<600 & NASDelay < 600 & LateAircraftDelay<600 ]
+summary(dt)
+length_finish=nrow(dt)
+```
+```{r}
+dt  <-as.data.table(merge(dt,dt_airports,by.x="Origin",by.y="iata"))
+setnames(dt,old=c('airport','lat','long'),new=c('airportOrigin','latOrigin','longOrigin'))
+
+dt  <-as.data.table(merge(dt,dt_airports,by.x="Dest",by.y="iata"))
+setnames(dt,old=c('airport','lat','long'),new=c('airportDest','latDest','longDest'))
+```
+
+
+```{r}
+dt  <-as.data.table(merge(dt,dt_companies,by.x="UniqueCarrier",by.y="Code"))
+dt[, CompanyName := gsub("\\s*\\([^\\)]+\\)", "", CompanyName)]
+# setnames(dt,old=c('Description'),new=c('CompanyName'))
+```
+
+
+```{r}
+cat('Total bad data is',round((length_start-length_finish)*100/length_start,digits=4),'%')
+
+# dt[CancellationCode!=0]
+```
+```{r}
+
+```
+```{r}
+summary(dt)
+```
+### Company name vs delay
+
+## Kwestie bezpieczenstwa
+```{r}
+num_diverted = nrow(dt[Diverted==1])
+num_cancelled = nrow(dt[Cancelled==1])
+
+res <- data.table(
+  Label=c('Diverted','Cancelled'),
+  Value = c(num_diverted,num_cancelled)
+)
+res
+
+```
+
+
+```{r}
+ggplot(res, aes(x = Label, y = Value)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Label", y = "Quantity", title = "Diverted vs Cancelled") +
+  theme_minimal()
+```
+```{r}
+dt[Cancelled==1 & CancellationCode!=0]
+```
+```{r}
+res <- dt[Cancelled == 1, .(cancelled = .N), by = .(Month)]
+overall_mean=mean(res$cancelled)
+res
+```
+```{r}
+ggplot(res, aes(x = as.factor(Month), y = cancelled, fill = cancelled > overall_mean)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c("green", "red"), labels = c("Poniżej średniej", "Powyżej średniej")) +
+  labs(x = "Miesiąc", y = "Średnie opóźnienie", fill = "Opóźnienie") +
+  ggtitle("Month vs Cancellation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))+
+  geom_hline(yintercept = overall_mean, color = "red", linetype = "dashed", size = 1) +
+  annotate("text", x = 1, y = overall_mean, label = "Overall mean", vjust = -0.5, hjust = 0, color = "black", size = 4)
+```
+TODO mapka diverted 
+
+```{r}
+res <- dt[Cancelled == 1, .(cancelled = .N), by = .(CancellationCode)]
+res
+```
+```{r}
+ggplot(res, aes(x = CancellationCode, y = cancelled)) +
+  geom_bar(stat = "identity", fill = "pink") +
+  labs(x = "Label", y = "Quantity", title = "Code ") +
+  theme_minimal()
+```
+
+```{r}
+res <- dt[Cancelled == 1 & CancellationCode=='A', .(cancelled = .N), by = .(CompanyName)]
+overall_mean <- mean(res$cancelled)
+```
+```{r}
+ggplot(res, aes(x = CompanyName, y = cancelled,fill = cancelled<overall_mean)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Company Name", y = "Quantity of delays") +
+  ggtitle("Airlines vs delay") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  geom_hline(yintercept = overall_mean, color = "red", linetype = "dashed", size = 1) +
+  annotate("text", x = 1, y = overall_mean, label = "Overall mean", vjust = -0.5, hjust = 0, color = "black", size = 4)
+```
+```{r}
+res <- dt[Cancelled == 1 & CancellationCode=='A', .(cancelled = .N), by = .(Month)]
+overall_mean <- mean(res$cancelled)
+```
+```{r}
+ggplot(res, aes(x = Month, y = cancelled,fill = cancelled<overall_mean)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Month", y = "Num of delays") +
+  ggtitle("Airlines vs delay") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  geom_hline(yintercept = overall_mean, color = "red", linetype = "dashed", size = 1) +
+  annotate("text", x = 1, y = overall_mean, label = "Overall mean", vjust = -0.5, hjust = 0, color = "black", size = 4)
+```
+```{r}
+res <- dt[ CarrierDelay>0, .(avgTime = mean(CarrierDelay)), by = .(CompanyName)]
+overall_mean <- mean(res$avgTime)
+```
+```{r}
+ggplot(res, aes(x = CompanyName, y = avgTime,fill = avgTime<overall_mean)) +
+  geom_bar(stat = "identity") +
+  labs(x = "CompanyName", y = "Num of delays") +
+  ggtitle("Airlines vs delay") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  geom_hline(yintercept = overall_mean, color = "red", linetype = "dashed", size = 1) +
+  annotate("text", x = 1, y = overall_mean, label = "Overall mean", vjust = -0.5, hjust = 0, color = "black", size = 4)
+```
+
+
+```{r}
+res_c <- dt[Cancelled == 1 & CancellationCode=='C', .(count = .N), by = .(Month)]
+res_flights <- dt[, .(count = .N), by = .(Month)]
+
+corelation <- res_c$count*100/ res_flights$count 
+
+# corelation
+
+res <- data.table(Month=res_c$Month,corelation=corelation)
+
+```
+```{r}
+ggplot(res, aes(x = Month, y = corelation)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Month", y = "percentage", title = "Month percentage of flights") +
+  theme_minimal()
+```
+
