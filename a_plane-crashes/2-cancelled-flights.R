@@ -1,5 +1,5 @@
 library(dplyr)
-library(data.table)
+# library(data.table)
 library(ggplot2)
 library(usmap)
 library(shiny)
@@ -8,7 +8,7 @@ library(shiny)
 # Odpalane z poziomu projektu powinno byc ./2001.csv.bz2, ale nie wrzucamy na gh pliku projektu
 # df <- read.csv("./2001.csv.bz2")
 
-df <- fread("./2001.csv.bz2", data.table = FALSE)
+df <- read.csv("./2001.csv.bz2")
 df <- filter(df, Month==9) %>%
   select(DayofMonth, Origin, Dest, Cancelled)
 
@@ -23,8 +23,8 @@ originCancelledByStates <- left_join(df, airports, by=join_by(Origin==iata)) %>%
   ungroup() %>%
   mutate(CancelledPercentage=(Cancelled/PlannedFlights)*100)
 
-plot_usmap(data=originCancelledByStates[originCancelledByStates$DayofMonth==16,], values="CancelledPercentage") +
-  scale_fill_continuous(name="% of cancelled flights", low="#ffd9d9", high="#ff0000", limits=c(0,100))
+# plot_usmap(data=originCancelledByStates[originCancelledByStates$DayofMonth==16,], values="CancelledPercentage") +
+#   scale_fill_continuous(name="% of cancelled flights", low="#ffd9d9", high="#ff0000", limits=c(0,100))
 
 
 
@@ -55,7 +55,7 @@ server <- function(input, output) {
   
   output$heatMap <- renderPlot({
     
-    plot_usmap(data=originCancelledByStates[originCancelledByStates$DayofMonth==input$day,], values="CancelledPercentage") +
+    plot_usmap(data=originCancelledByStates[originCancelledByStates$DayofMonth==input$day,], values="CancelledPercentage", labels=TRUE) +
       scale_fill_continuous(name="% of cancelled flights", low="#ffd9d9", high="#ff0000", limits=c(0,100))
     
   })
