@@ -1,0 +1,382 @@
+# ***How doe hurricanes affect flights in the USA?***
+
+#### Hurricane Katrina was one of the most destructive hurricanes ever to hit the United States. Among recorded Atlantic cyclones, it was the sixth most violent. The hurricane formed on 23 August 2005 in the Bahamas. Let's analyse its impact on US flights by looking at flight delays and cancellations due to weather in 2005.
+
+#### We are using data from <https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/HG7NV7> focusing on flights from 2005 and airports data.
+
+```{r}
+library("data.table")
+library("tidyverse")
+library(dplyr)
+```
+
+```{r}
+Data2005 <- as.data.frame(read.csv('.\\2005.csv.bz2'))
+```
+
+```{r}
+#let's take the columns that interest us
+df2005<- cbind(Data2005$TailNum, Data2005$Month, Data2005$Cancelled, Data2005$DayofMonth, Data2005$DayOfWeek, Data2005$Origin, Data2005$Dest, Data2005$WeatherDelay, Data2005$DepDelay, Data2005$ArrDelay, Data2005$CancellationCode)
+colnames(df2005) <- c("TailNum", "Month", "Cancelled", "DayofMonth", "DayOfWeek", "Origin", "Dest", "WeatherDelay", "DepDelay", "ArrDelay", "CancellationCode")
+df2005<-as.data.table(df2005)
+
+#let's join state of origin to the data table
+dt_airports = fread("./airports.csv",select=c("iata","state"))
+colnames(dt_airports)[1] <- "Origin"
+df2005 <- merge(df2005, dt_airports, by = "Origin", all = FALSE)
+df2005<-as.data.table(df2005)
+```
+
+```{r}
+df2005 <- mutate(df2005, Date=make_date(year=2005, month=df2005$Month, day=df2005$DayofMonth)) 
+```
+
+Let's check how many cancellations there were every day in 2005.
+
+```{r}
+#Cancellation, Date
+dateAndCancellation <- as.data.table(df2005)[, c('Month','Date', "Cancelled","CancellationCode")]
+dateAndCancellation <- df2005[CancellationCode=='B',sum(as.integer(Cancelled)), by = Date]
+colnames(dateAndCancellation)[2] <- "Cancelled"
+dateAndCancellation <- as.data.table(dateAndCancellation)
+
+ggplot(data = dateAndCancellation) +
+  geom_line(aes(x=Date, y=Cancelled), col="red", alpha = 0.5)+
+  labs(fill=NULL,
+       title="Weather cancellations in 2005", 
+       caption = "Source: dataverse.harvard.edu")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Let's do the same with weather delays.
+
+```{r}
+#WeatherDelays, Date
+dateAndDelays <- as.data.table(df2005)[, c('Date', "WeatherDelay")]
+dateAndDelays <- df2005[,sum(as.integer(WeatherDelay)), by = Date]
+colnames(dateAndDelays)[2] <- "WeatherDelay"
+dateAndDelays <- as.data.table(dateAndDelays)
+
+ggplot(data = dateAndDelays) +
+  geom_line(aes(x=Date, y=WeatherDelay), col="red", alpha = 0.5)+
+  labs(fill=NULL,
+       title="Weather delays in 2005", 
+       caption = "Source: dataverse.harvard.edu")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+It is not very readable - let's check weather delays by month, not day by day.
+
+```{r}
+WeatherDelaysandCancellation <-  as.data.table(df2005)[, c('Month', 'WeatherDelay', "Cancelled","CancellationCode")]
+WeatherDelay <- WeatherDelaysandCancellation[, sum(as.integer(WeatherDelay)), by = "Month"]
+colnames(WeatherDelay)[2] <- "Delay"
+WeatherDelay[,1] <- lapply(WeatherDelay[,1],as.integer)
+weatherCancellation <- WeatherDelaysandCancellation[CancellationCode=="B", sum(as.integer(Cancelled)), by =Month]
+colnames(weatherCancellation)[2] <- "Cancelled"
+weatherCancellation[,1] <- lapply(weatherCancellation[,1],as.integer)
+ggplot(data = WeatherDelay) +
+  geom_col(aes(x=Month, y=Delay, fill = ifelse(Delay<mean(WeatherDelay$Delay),"below average", "above average")), alpha = 0.5)+
+  theme(legend.text = element_text(size=6))+
+  labs(fill=NULL,
+       title="Weather delays by month in 2005", 
+       caption = "Source: dataverse.harvard.edu")+
+  geom_hline(yintercept =mean(WeatherDelay$Delay), linetype = "dashed", color = "#FF6666") +
+   theme(plot.title = element_text(hjust = 0.5))+
+  geom_text(x =0.45, y = (4e+05)+10000, label = "mean", size = 2.7, color = "#FF6666") 
+  
+ggplot(data = weatherCancellation) +
+  geom_col(aes(x=Month, y=Cancelled,  fill = ifelse(Cancelled<mean(weatherCancellation$Cancelled),"below average", "above average")), alpha = 0.5)+
+  theme(legend.text = element_text(size=6))+
+  labs(fill=NULL,
+       title="Weather cancellation by month in 2005", 
+       caption = "Source: dataverse.harvard.edu")+
+  geom_hline(aes(yintercept = mean(weatherCancellation$Cancelled), linetype = "Mean"), linetype = "dashed", color = "#FF6666") +
+   theme(plot.title = element_text(hjust = 0.5))+
+  geom_text(x = 0.45, y = 4800, label = "mean", size = 2.7, color = "#FF6666") 
+```
+
+Now let's check which origin has the most cancellations.
+
+```{r}
+#Origin, Cancellation
+OriginCancelled <- df2005[CancellationCode=='B', sum(as.integer(Cancelled)), by = "Origin"]
+colnames(OriginCancelled)[2] <- "Cancelled"
+setorder(OriginCancelled, -Cancelled)
+
+#let's take only top values, because there are too many origins to plot all of them
+TopValues <- OriginCancelled %>% 
+  top_n(7, Cancelled) %>% 
+  mutate(Origin = ifelse(row_number() == 8, "Other", Origin))
+
+SumValue <- OriginCancelled %>%
+  filter(!Origin %in% TopValues$Origin) %>%
+  summarise(Cancelled = sum(Cancelled), Origin = "Other")
+
+OriginCancellationToPlot <- bind_rows(TopValues, SumValue)
+
+OriginCancellationToPlot$Percentage <- OriginCancellationToPlot$Cancelled / sum(OriginCancellationToPlot$Cancelled) * 100
+
+ggplot(data = OriginCancellationToPlot) +
+  geom_bar(aes(x = "", y = Percentage, fill = Origin), stat = "identity", width = 1)+
+  coord_polar(theta = "y") +
+  labs(fill="Origin",
+       title="Top origins in weather cancellations in 2005", 
+       caption = "Source: dataverse.harvard.edu")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Now let us check if the origin has impact of weather delays and cancellations. Which origin has the most weather delays?
+
+```{r}
+#Origin, Delays
+OriginandDelays <-  as.data.table(df2005)[, c('WeatherDelay', "Origin")]
+OriginandDelays <- OriginandDelays[, sum(as.integer(WeatherDelay)), by = 'Origin']
+colnames(OriginandDelays)[2] <- "Delay"
+setorder(OriginandDelays, -Delay)
+
+#again, let's take only top values
+TopValues <- OriginandDelays %>% 
+  top_n(7, Delay) %>% 
+  mutate(Origin = ifelse(row_number() == 8, "Other", Origin))
+
+SumValue <- OriginandDelays %>%
+  filter(!Origin %in% TopValues$Origin) %>%
+  summarise(Delay = sum(Delay), Origin = "Other")
+
+OriginDelaysToPlot <- bind_rows(TopValues, SumValue)
+
+
+OriginDelaysToPlot$Percentage <- OriginDelaysToPlot$Delay / sum(OriginDelaysToPlot$Delay) * 100
+
+ggplot(data = OriginDelaysToPlot) +
+  geom_bar(aes(x = "", y = Percentage, fill = Origin), stat = "identity", width = 1)+
+  coord_polar(theta = "y") +
+  labs(fill="origin",
+       title="Top origins in weather delays in 2005", 
+       caption = "Source: dataverse.harvard.edu")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+#### Conclusion:
+
+-   The most weather cancellations and delays were on flights where the origin was ATL.
+
+-   The most weather cancellations took place in January.
+
+-   The most weather delays took place during the holiday and Christmas periods.
+
+Let's note that it is possible that there are the most flights during these periods. Let's see if this is the only factor. Let us show the percentage of cancelled flights in relation to all flights in the given months.
+
+```{r}
+#Month and Cancelled/All flights
+#weatherCancellation was the data table with cancellations in each month of 2005
+#now let's count how many flights were there in each month
+AllFlights <-  as.data.table(df2005)[, "Month"]
+AllFlights <- AllFlights[, .N, by = 'Month']
+colnames(AllFlights)[2] <- "all"
+AllFlights[,1] <- lapply(AllFlights[,1], as.integer)
+
+#now let's see percentage of cancelled flights
+PercentageCancelled <- as.data.table(weatherCancellation)[AllFlights, on = "Month"]
+PercentageCancelled <- PercentageCancelled[, Cancelled/all, by = 'Month']
+colnames(PercentageCancelled)[2] <- "CancelledPercentage"
+setorder(PercentageCancelled, -CancelledPercentage)
+
+PercentageCancelled$Month <- factor(PercentageCancelled$Month)
+ggplot(data = PercentageCancelled) +
+  geom_bar(aes(x = Month, y = CancelledPercentage), stat = "identity", fill="purple")+
+  labs(title="Percentage of flights cancelled due to weather in 2005 by month", 
+       caption = "Source: dataverse.harvard.edu",
+       y="% of weather cancellations in all flights")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#and now let's divide sum of weather delays by all flights in each month
+PercentageDelays <- as.data.table(WeatherDelay)[AllFlights, on = "Month"]
+PercentageDelays <- PercentageDelays[, Delay/all, by = 'Month']
+colnames(PercentageDelays)[2] <- "DelaysPercentage"
+setorder(PercentageDelays, -DelaysPercentage)
+
+PercentageDelays$Month <- factor(PercentageDelays$Month)
+ggplot(data = PercentageDelays) +
+  geom_bar(aes(x = Month, y = DelaysPercentage), stat = "identity", fill="purple")+
+  labs(title="Share of weather delays in all flights in 2005 by month", 
+       caption = "Source: dataverse.harvard.edu",
+       y="sum of weather delays/nr of all flights")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+#### Conclusion:
+
+-   The worst weather in 2005 was probably in January 2005.
+
+-   Weather has more impact on flight cancellations than on delays.
+
+Now let's do the same with origins. Let's divide sum of weather delays and cancelled flights due to weather in each origin by all flights from this origin.
+
+```{r}
+#let's count all flights
+AllFlights <-  as.data.table(df2005)[, "Origin"]
+AllFlights <- AllFlights[, .N, by = 'Origin']
+colnames(AllFlights)[2] <- "all"
+
+#now let's count cancelled and delayed flights
+OriginCancelled <- df2005[CancellationCode=='B', sum(as.integer(Cancelled)), by = "Origin"]
+colnames(OriginCancelled)[2] <- "Cancelled"
+setorder(OriginCancelled, -Cancelled)
+
+OriginandDelays <-  as.data.table(df2005)[, c('WeatherDelay', "Origin")]
+OriginandDelays <- OriginandDelays[, sum(as.integer(WeatherDelay)), by = 'Origin']
+colnames(OriginandDelays)[2] <- "Delay"
+
+#and now let's divide them by all flights
+PercentageDelaysOrigin <- as.data.table(OriginandDelays)[AllFlights, on = "Origin"]
+PercentageDelaysOrigin <- PercentageDelaysOrigin[, Delay/all, by = 'Origin']
+colnames(PercentageDelaysOrigin)[2] <- "DelaysPercentage"
+
+#and now let's divide cancelled flights by all flights
+PercentageCancelledOrigin <- as.data.table(OriginCancelled)[AllFlights, on = "Origin"]
+PercentageCancelledOrigin <- PercentageCancelledOrigin[, Cancelled/all, by = 'Origin']
+colnames(PercentageCancelledOrigin)[2] <- "CancelledPercentage"
+PercentageCancelledOrigin <- PercentageCancelledOrigin[CancelledPercentage>0]
+setorder(PercentageCancelledOrigin, -CancelledPercentage)
+
+TopValues <- PercentageCancelledOrigin %>% 
+  top_n(7, CancelledPercentage) %>% 
+  mutate(Origin = ifelse(row_number() == 8, "Other", Origin))
+
+SumValue <- PercentageCancelledOrigin %>%
+  filter(!Origin %in% TopValues$Origin) %>%
+  summarise(CancelledPercentage = sum(CancelledPercentage), Origin = "Other")
+
+PercentageCancelledOriginToPlot <- bind_rows(TopValues, SumValue)
+
+PercentageCancelledOriginToPlot$Share <- PercentageCancelledOriginToPlot$CancelledPercentage / sum(PercentageCancelledOriginToPlot$CancelledPercentage) * 100
+
+ggplot(data = PercentageCancelledOriginToPlot) +
+  geom_bar(aes(x = "", y = Share, fill = Origin), stat = "identity", width = 1)+
+  coord_polar(theta = "y") +
+  labs(fill=as.character("Origin"),
+       title="Top origins in weather cancellations in 2005", 
+       caption = "Source: dataverse.harvard.edu")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_fill_manual(values = colors)
+
+#and now let's divide sum of delays by all flights
+PercentageDelaysOrigin <- as.data.table(OriginandDelays)[AllFlights, on = "Origin"]
+PercentageDelaysOrigin <- PercentageDelaysOrigin[, Delay/all, by = 'Origin']
+colnames(PercentageDelaysOrigin)[2] <- "DelaysPercentage"
+PercentageDelaysOrigin <- PercentageDelaysOrigin[DelaysPercentage>0]
+setorder(PercentageDelaysOrigin, -DelaysPercentage)
+
+TopValues <- PercentageDelaysOrigin %>% 
+  top_n(7, DelaysPercentage) %>% 
+  mutate(Origin = ifelse(row_number() == 8, "Other", Origin))
+
+SumValue <- PercentageDelaysOrigin %>%
+  filter(!Origin %in% TopValues$Origin) %>%
+  summarise(DelaysPercentage = sum(DelaysPercentage), Origin = "Other")
+
+PercentageDelaysOriginToPlot <- bind_rows(TopValues, SumValue)
+
+PercentageDelaysOriginToPlot$Share <- PercentageDelaysOriginToPlot$DelaysPercentage / sum(PercentageDelaysOriginToPlot$DelaysPercentage) * 100
+
+colors <- c("#FF8C61", "#155091", "#FFA87D",  "#FFD9B8", "#FFECD6", "#FFF6EE",
+            "#C6D7DF", "#A3BFCF", "#80A7BF", "#5C90AF", "#3978A0")
+            
+ggplot(data = PercentageDelaysOriginToPlot) +
+  geom_bar(aes(x = "", y = Share, fill = Origin), stat = "identity", width = 1)+
+  coord_polar(theta = "y") +
+  labs(fill=as.character("Origin"),
+       title="Top origins in weather delays in 2005", 
+       caption = "Source: dataverse.harvard.edu")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_fill_manual(values = colors)
+
+```
+
+#### Conclusion:
+
+-   Origins do not really affect the weather cancellations.
+
+-   CYS was the origin with the most weather delays in 2005, but it it because there was only 1 flight from CYS in 2005. Other origins does not differ so much in their sum of weather delays.
+
+-   Origins do not really affect the sum of weather delay.
+
+    This is surprising, because in 2005 there were some strong hurricanes (for example Hurricane Katrina) and floods in some areas of USA and it seems like they did not have a strong impact on flight delays and cancellations. Let's find top states in weather delays and cancellations in 2005.
+
+```{r}
+#State of origin, Cancellation
+StateCancelled <- df2005[CancellationCode=='B', sum(as.integer(Cancelled)), by = "state"]
+colnames(StateCancelled)[2] <- "Cancelled"
+setorder(StateCancelled, -Cancelled)
+StateCancelled <- as.data.table(StateCancelled)
+
+#let's count all flights
+AllFlights <-  as.data.table(df2005)[, "state"]
+AllFlights <- AllFlights[, .N, by = 'state']
+colnames(AllFlights)[2] <- "all"
+
+PercentageStateCancelled <- as.data.table(StateCancelled)[AllFlights, on = "state"]
+PercentageStateCancelled <- PercentageStateCancelled[, Cancelled/all, by = 'state']
+colnames(PercentageStateCancelled)[2] <- "Cancelled"
+PercentageStateCancelled <- PercentageStateCancelled[Cancelled>0]
+#let's take only top values, because there are too many states to plot all of them
+sorted_dt <- PercentageStateCancelled[order(-Cancelled), ]
+new_dt <- sorted_dt[1:10, ]
+
+setorder(new_dt, -Cancelled)
+top3=as.double(new_dt[3,2])
+
+ggplot(data = new_dt) +
+  geom_bar(stat='identity', aes(x=state, y=Cancelled, fill = ifelse(Cancelled<top3, "<top 3","top 3")))+
+  theme(legend.text = element_text(size=6),axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(fill=NULL,
+       title="Top 10 states in weather cancellations in 2005", 
+       caption = "Source: dataverse.harvard.edu",
+       y="weather cancellations/all flights")+
+   theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+#State of origin, weather delay
+StateDelay <- df2005[, sum(as.integer(WeatherDelay)), by = "state"]
+colnames(StateDelay)[2] <- "Delay"
+setorder(StateDelay, -Delay)
+StateDelay <- as.data.table(StateDelay)
+
+#let's count all flights
+AllFlights <-  as.data.table(df2005)[, "state"]
+AllFlights <- AllFlights[, .N, by = 'state']
+colnames(AllFlights)[2] <- "all"
+
+PercentageStateDelay <- as.data.table(StateDelay)[AllFlights, on = "state"]
+PercentageStateDelay <- PercentageStateDelay[, Delay/all, by = 'state']
+colnames(PercentageStateDelay)[2] <- "Delay"
+PercentageStateDelay <- PercentageStateDelay[Delay>0]
+#let's take only top values, because there are too many states to plot all of them
+sorted_dt <- PercentageStateDelay[order(-Delay), ]
+new_dt <- sorted_dt[1:10, ]
+
+top3=as.double(new_dt[3,2])
+
+setorder(new_dt, -Delay)
+ggplot(data = new_dt) +
+  geom_bar(stat='identity', aes(x=state, y=Delay, fill = ifelse(Delay<top3, "<top 3","top 3")))+
+  theme(legend.text = element_text(size=6),axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(fill=NULL,
+       title="Top 10 states in weather delays in 2005", 
+       caption = "Source: dataverse.harvard.edu",
+       y="sum of weather delays/nr of all flights")+
+   theme(plot.title = element_text(hjust = 0.5))
+```
+
+#### Conclusion:
+
+-   The most cancellations due to weather were in LA, MS, ME.
+
+-   The most delays due to weather were in ME, GA, WV.

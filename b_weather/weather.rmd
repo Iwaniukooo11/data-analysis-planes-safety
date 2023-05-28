@@ -1,0 +1,250 @@
+---
+title: "weather_2005"
+output: html_document
+date: "2023-05-25"
+runtime: shiny
+---
+
+Let's group the data by state and month at a time - this will allow us to see how the percentage of flights delayed by more than 30 minutes due to weather and the percentage of flights canceled due to weather changed in 2005 in the given states.
+
+```{r}
+library("data.table")
+library("tidyverse")
+library(dplyr)
+library(usmap)
+library(shiny)
+
+Data2005 <- as.data.frame(read.csv('.\\2005.csv.bz2'))
+df2005<- cbind(Data2005$TailNum, Data2005$Month, Data2005$Cancelled, Data2005$DayofMonth, Data2005$DayOfWeek, Data2005$Origin, Data2005$Dest, Data2005$WeatherDelay, Data2005$DepDelay, Data2005$ArrDelay, Data2005$CancellationCode)
+colnames(df2005) <- c("TailNum", "Month", "Cancelled", "DayofMonth", "DayOfWeek", "Origin", "Dest", "WeatherDelay", "DepDelay", "ArrDelay", "CancellationCode")
+df2005<-as.data.table(df2005)
+
+#let's join state of origin to the data table 
+dt_airports = fread(".\\airports.csv",select=c("iata","state"))
+colnames(dt_airports)[1] <- "Origin"
+df2005 <- merge(df2005, dt_airports, by = "Origin", all = FALSE)
+df2005<-as.data.table(df2005)
+
+StateCancelledbyMonth <- df2005[CancellationCode=='B', sum(as.integer(Cancelled)), by = c("state", "Month")]
+colnames(StateCancelledbyMonth)[3] <- "Cancelled"
+setorder(StateCancelledbyMonth, -Cancelled)
+StateCancelledbyMonth <- as.data.table(StateCancelledbyMonth)
+
+#let's count all flights
+AllFlightsbyMonth <-  as.data.table(df2005)[, c("state", "Month")]
+AllFlightsbyMonth <- AllFlightsbyMonth[, .N, by = c('state', "Month")]
+colnames(AllFlightsbyMonth)[3] <- "all"
+
+PercentageStateCancelledbyMonth = merge(x=AllFlightsbyMonth,y=StateCancelledbyMonth,by=c("state", "Month"),all.x=TRUE)
+PercentageStateCancelledbyMonth <- PercentageStateCancelledbyMonth[, Cancelled/all, by = c('state',"Month")]
+colnames(PercentageStateCancelledbyMonth)[3] <- "Cancelled"
+PercentageStateCancelledbyMonth[is.na(Cancelled)] <- 0
+PercentageStateCancelledbyMonth <- PercentageStateCancelledbyMonth[!is.na(state)]
+
+ui <- fluidPage(
+  
+  titlePanel("Percentage of flights cancelled due to weather by month"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput(
+        inputId = "Month",
+        label = "Month",
+        min = 1,
+        max = 12,
+        value = 1,
+        ticks = FALSE
+      )
+    ),
+
+    mainPanel(
+      plotOutput(outputId = "heatMap")
+    )
+  )
+)
+
+server <- function(input, output) {
+  
+  output$heatMap <- renderPlot({
+    
+    plot_usmap(data=PercentageStateCancelledbyMonth[PercentageStateCancelledbyMonth$Month==input$Month,], values="Cancelled", labels=TRUE) +
+      labs(caption = "Source: dataverse.harvard.edu")+
+      scale_fill_continuous(name="% of cancelled flights", low="#ffd9d9", high="#ff0000", limits=c(0,0.192))
+    
+  })
+  
+}
+
+shinyApp(ui, server)
+```
+
+```{r}
+StateDelaysbyMonth <- df2005[WeatherDelay>30, .N, by = c("state", "Month")]
+colnames(StateDelaysbyMonth)[3] <- "Delays"
+setorder(StateDelaysbyMonth, -Delays)
+StateDelaysbyMonth <- as.data.table(StateDelaysbyMonth)
+
+#let's count all flights
+AllFlightsbyMonth <-  as.data.table(df2005)[, c("state", "Month")]
+AllFlightsbyMonth <- AllFlightsbyMonth[, .N, by = c('state', "Month")]
+colnames(AllFlightsbyMonth)[3] <- "all"
+
+PercentageStateDelaysbyMonth = merge(x=AllFlightsbyMonth,y=StateDelaysbyMonth,by=c("state", "Month"),all.x=TRUE)
+PercentageStateDelaysbyMonth <- PercentageStateDelaysbyMonth[, Delays/all, by = c('state',"Month")]
+colnames(PercentageStateDelaysbyMonth)[3] <- "Delays"
+PercentageStateDelaysbyMonth[is.na(Delays)] <- 0
+PercentageStateDelaysbyMonth <- PercentageStateDelaysbyMonth[!is.na(state)]
+
+ui <- fluidPage(
+  
+  titlePanel("Percentage of flights with weather delays >30min"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput(
+        inputId = "Month",
+        label = "Month",
+        min = 1,
+        max = 12,
+        value = 1,
+        ticks = FALSE
+      )
+    ),
+
+    mainPanel(
+      plotOutput(outputId = "heatMap")
+    )
+  )
+)
+
+server <- function(input, output) {
+  
+  output$heatMap <- renderPlot({
+    
+    plot_usmap(data=PercentageStateDelaysbyMonth[PercentageStateDelaysbyMonth$Month==input$Month,], values="Delays", labels=TRUE) +
+      labs(fill=NULL,
+       caption = "Source: dataverse.harvard.edu")+
+      scale_fill_continuous(name="% of weather delays", low="#ffd9d9", high="#ff0000", limits=c(0,0.0316))
+    
+  })
+  
+}
+
+
+shinyApp(ui, server)
+```
+
+```{r}
+StateCancelledAugust <- as.data.table(df2005)[Month=="8", c('DayofMonth', "Cancelled","CancellationCode")]
+StateCancelledAugust <- df2005[CancellationCode=='B' , sum(as.integer(Cancelled)), by = c("state", "DayofMonth")]
+colnames(StateCancelledAugust)[3] <- "Cancelled"
+setorder(StateCancelledAugust, -Cancelled)
+StateCancelledAugust <- as.data.table(StateCancelledAugust)
+
+#let's count all flights
+AllFlightsAugust <-  as.data.table(df2005)[Month=="8", c("state", "DayofMonth")]
+AllFlightsAugust <- AllFlightsAugust[, .N, by = c('state', "DayofMonth")]
+colnames(AllFlightsAugust)[3] <- "all"
+
+PercentageStateCancelledAugust <- merge(x=AllFlightsAugust,y=StateCancelledAugust,by=c("state", "DayofMonth"),all.x=TRUE)
+PercentageStateCancelledAugust <- PercentageStateCancelledAugust[, Cancelled/all, by = c('state',"DayofMonth")]
+colnames(PercentageStateCancelledAugust)[3] <- "Cancelled"
+PercentageStateCancelledAugust[is.na(Cancelled)] <- 0
+PercentageStateCancelledAugust <- PercentageStateCancelledAugust[!is.na(state)]
+
+ui <- fluidPage(
+  
+  titlePanel("Percentage of flights cancelled due to weather in August 2005"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput(
+        inputId = "DayofMonth",
+        label = "Day of August",
+        min = 1,
+        max = 31,
+        value = 1,
+        ticks = FALSE
+      )
+    ),
+
+    mainPanel(
+      plotOutput(outputId = "heatMap")
+    )
+  )
+)
+
+server <- function(input, output) {
+  
+  output$heatMap <- renderPlot({
+    
+    plot_usmap(data=PercentageStateCancelledAugust[PercentageStateCancelledAugust$DayofMonth==input$DayofMonth,], values="Cancelled", labels=TRUE) +
+      labs(fill=NULL,
+           caption = "Source: dataverse.harvard.edu")+
+      scale_fill_continuous(name="% of cancelled flights in August", low="#ffd9d9", high="#ff0000", limits=c(0,1.21))
+    
+  })
+  
+}
+
+shinyApp(ui, server)
+
+```
+
+```{r}
+StateDelaysAugust <- as.data.table(df2005)[Month=="8", c('DayofMonth', "WeatherDelay")]
+StateDelaysAugust <- df2005[ WeatherDelay>30, .N, by = c("state", "DayofMonth")]
+colnames(StateDelaysAugust)[3] <- "Delay"
+setorder(StateDelaysAugust, -Delay)
+StateDelaysAugust <- as.data.table(StateDelaysAugust)
+
+#let's count all flights
+AllFlightsAugust <-  as.data.table(df2005)[Month=="8", c("state", "DayofMonth")]
+AllFlightsAugust <- AllFlightsAugust[, .N, by = c('state', "DayofMonth")]
+colnames(AllFlightsAugust)[3] <- "all"
+
+PercentageStateDelayAugust <- merge(x=AllFlightsAugust,y=StateDelaysAugust,by=c("state", "DayofMonth"),all.x=TRUE)
+PercentageStateDelayAugust <- PercentageStateDelayAugust[, Delay/all, by = c('state',"DayofMonth")]
+colnames(PercentageStateDelayAugust)[3] <- "Delay"
+PercentageStateDelayAugust[is.na(Delay)] <- 0
+PercentageStateDelayAugust <- PercentageStateDelayAugust[!is.na(state)]
+
+ui <- fluidPage(
+  
+  titlePanel("Percentage of flights delayed >30min due to weather in August 2005"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput(
+        inputId = "Day",
+        label = "Day of August",
+        min = 1,
+        max = 31,
+        value = 1,
+        ticks = FALSE
+      )
+    ),
+
+    mainPanel(
+      plotOutput(outputId = "heatMap")
+    )
+  )
+)
+
+server <- function(input, output) {
+  
+  output$heatMap <- renderPlot({
+    
+    plot_usmap(data=PercentageStateDelayAugust[PercentageStateDelayAugust$DayofMonth==input$Day,], values="Delay", labels=TRUE) +
+      labs(caption = "Source: dataverse.harvard.edu")+
+      scale_fill_continuous(name="% of delayed >30min flights in August", low="#ffd9d9", high="#ff0000", limits=c(0,0.45))
+    
+  })
+  
+}
+
+shinyApp(ui, server)
+
+```
+You can see how weather cancellation percentage increased after 28th in states, where Hurricane Katrina hit USA. You can also see the impact of Rita and Wilma hurricanes on flight cancellations. In 2005, hurricanes were the strongest contributor to weather-related flight cancellations.
+The impact of hurricanes on weather delays is not as strong - there are other factors that affect them, for example in Texas in some months there was really high percentage of flight delays, but there were no hurricanes there during this period.
